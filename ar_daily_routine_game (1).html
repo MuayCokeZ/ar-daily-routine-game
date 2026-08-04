@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR Daily Routine Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Mali:wght@400;600&family=Prompt:wght@400;600&display=swap');
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Prompt', 'Mali', sans-serif;
+            background-color: #2c3e50;
+            touch-action: none; /* ป้องกันการเลื่อนหน้าจอในมือถือ */
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #webcam {
+            display: none;
+        }
+
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+
+        /* --- หน้าจอเลือกโหมดการควบคุม --- */
+        #mode-selection {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #e0f7fa;
+            background-image: linear-gradient(120deg, #e0f7fa 0%, #80deea 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            color: #333;
+            text-align: center;
+        }
+
+        .btn-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 40px;
+        }
+
+        .mode-btn {
+            padding: 20px 40px;
+            font-size: 1.5rem;
+            font-family: 'Prompt', sans-serif;
+            font-weight: 600;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            color: white;
+            box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .mode-btn:hover, .mode-btn:active {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 12px 20px rgba(0,0,0,0.3);
+        }
+
+        .camera-btn { background-color: #0984e3; }
+        .touch-btn { background-color: #e17055; }
+        .mode-icon { font-size: 3rem; }
+
+        /* --- หน้าจอโหลดข้อมูล --- */
+        #loading-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #e0f7fa;
+            background-image: linear-gradient(120deg, #e0f7fa 0%, #80deea 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            color: #333;
+        }
+
+        .loader {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #00acc1;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        h1 {
+            font-family: 'Mali', cursive;
+            font-size: 3rem;
+            margin-bottom: 10px;
+            color: #00838f;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        p {
+            font-size: 1.2rem;
+            color: #2d3436;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="mode-selection">
+        <h1>AR Daily Routine Game</h1>
+        <p>How would you like to control the game?</p>
+        
+        <div class="btn-container">
+            <button class="mode-btn camera-btn" onclick="startGameMode('camera')">
+                <span class="mode-icon">📹</span>
+                Camera (AR Mode)
+            </button>
+            <button class="mode-btn touch-btn" onclick="startGameMode('touch')">
+                <span class="mode-icon">👆</span>
+                Touch / Mouse
+            </button>
+        </div>
+    </div>
+
+    <div id="loading-screen" style="display: none;">
+        <div class="loader"></div>
+        <h1>Loading...</h1>
+        <p id="loading-text">Loading images and game system. Please wait...</p>
+        <p id="camera-hint" style="font-size: 0.9rem; color: #636e72; margin-top: 10px; display: none;">(Please click "Allow" to grant webcam access)</p>
+    </div>
+
+    <div id="game-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('game-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingScreen = document.getElementById('loading-screen');
+        const modeSelection = document.getElementById('mode-selection');
+
+        let inputMode = null; // 'camera' or 'touch'
+        let gameLoopRunning = false;
+
+        // ตัวแปรสำหรับเมาส์/สัมผัส
+        let mouseX = 0;
+        let mouseY = 0;
+        let isMouseDown = false;
+        let wasMouseDown = false;
+
+        function updateMousePos(clientX, clientY) {
+            const rect = canvasElement.getBoundingClientRect();
+            mouseX = clientX - rect.left;
+            mouseY = clientY - rect.top;
+        }
+
+        canvasElement.addEventListener('mousemove', (e) => {
+            updateMousePos(e.clientX, e.clientY);
+            updateCursorStyle();
+        });
+
+        canvasElement.addEventListener('mousedown', (e) => { isMouseDown = true; });
+        canvasElement.addEventListener('mouseup', (e) => { isMouseDown = false; });
+
+        // Touch Events สำหรับมือถือ
+        canvasElement.addEventListener('touchstart', (e) => {
+            e.preventDefault(); 
+            updateMousePos(e.touches[0].clientX, e.touches[0].clientY);
+            isMouseDown = true;
+        }, { passive: false });
+        
+        canvasElement.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            updateMousePos(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: false });
+
+        canvasElement.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            isMouseDown = false;
+        }, { passive: false });
+
+        function updateCursorStyle() {
+            let pointer = false;
+            if (currentState === GameState.MENU) {
+                menuButtons.forEach(btn => {
+                    if (isPointInRect(mouseX, mouseY, btn.x, btn.y, btn.w, btn.h)) pointer = true;
+                });
+            } else if (currentState === GameState.GAME2) {
+                const slotY = game2Slots.length > 0 ? game2Slots[0].y : 140;
+                const slotH = 70;
+                const blockY = game2Blocks.length > 0 ? game2Blocks[0].homeY : canvasElement.height * 0.65;
+                const submitBtnY = slotY + slotH + (blockY - (slotY + slotH)) / 2 - 30;
+                const submitBtn = { x: canvasElement.width / 2 - 80, y: submitBtnY, w: 160, h: 60 };
+                
+                if (isPointInRect(mouseX, mouseY, submitBtn.x, submitBtn.y, submitBtn.w, submitBtn.h)) pointer = true;
+                game2Blocks.forEach(b => {
+                    if (isPointInRect(mouseX, mouseY, b.x, b.y, b.w, b.h)) pointer = true;
+                });
+            }
+            if (currentState !== GameState.MENU) {
+                const backBtn = { x: 20, y: 20, w: 120, h: 50 };
+                if (isPointInRect(mouseX, mouseY, backBtn.x, backBtn.y, backBtn.w, backBtn.h)) pointer = true;
+            }
+            canvasElement.style.cursor = pointer ? 'pointer' : 'default';
+        }
+
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        const GameState = {
+            MENU: 'MENU',
+            GAME1: 'GAME1', 
+            GAME2: 'GAME2', 
+        };
+
+        let currentState = GameState.MENU;
+        
+        // ข้อมูลมือ AR
+        let cursorX = 0;
+        let cursorY = 0;
+        let isHandVisible = false;
+        let isPinching = false;
+        let wasPinching = false;
+
+        let lastTime = Date.now();
+
+        function getCursorPos() {
+            if (inputMode === 'camera' && isHandVisible) {
+                return { x: cursorX, y: cursorY, active: true };
+            }
+            return { x: mouseX, y: mouseY, active: false }; 
+        }
+
+        function isActionActive() {
+            if (inputMode === 'camera') return isPinching || isMouseDown;
+            return isMouseDown; 
+        }
+
+        function wasActionActive() {
+            if (inputMode === 'camera') return wasPinching || wasMouseDown;
+            return wasMouseDown;
+        }
+
+        const colors = {
+            primary: '#0984e3',
+            secondary: '#e17055',
+            accent: '#fdcb6e',
+            danger: '#d63031',
+            success: '#00b894',
+            white: '#ffffff',
+            dark: '#2d3436'
+        };
+
+        const game1Data = [
+            { imageUrl: "WakeUp.png", imgObj: null, choices: ["wake up", "go to sleep"], answer: 0 },
+            { imageUrl: "Shower.png", imgObj: null, choices: ["brush teeth", "take a shower"], answer: 1 },
+            { imageUrl: "Breakfast.png", imgObj: null, choices: ["have breakfast", "have dinner"], answer: 0 },
+            { imageUrl: "School.png", imgObj: null, choices: ["go to school", "go home"], answer: 0 },
+            { imageUrl: "Homework.png", imgObj: null, choices: ["play games", "do homework"], answer: 1 },
+            { imageUrl: "Dinner.png", imgObj: null, choices: ["have dinner", "have lunch"], answer: 0 },
+            { imageUrl: "BrushTeeth.png", imgObj: null, choices: ["wash face", "brush teeth"], answer: 1 },
+            { imageUrl: "Sleep.png", imgObj: null, choices: ["go to bed", "wake up"], answer: 0 }
+        ];
+
+        let isAiReady = false;
+        let imagesLoadedCount = 0;
+        const totalImages = game1Data.length;
+        const loadingTextElement = document.getElementById('loading-text');
+
+        function checkGameReady() {
+            if ((inputMode === 'touch' || isAiReady) && imagesLoadedCount >= totalImages) {
+                if (loadingScreen.style.display !== 'none') {
+                    loadingScreen.style.display = 'none';
+                    initMenu();
+                    if (!gameLoopRunning) {
+                        gameLoopRunning = true;
+                        requestAnimationFrame(gameLoop);
+                    }
+                }
+            }
+        }
+
+        game1Data.forEach(q => {
+            const img = new Image();
+            img.onload = () => {
+                imagesLoadedCount++;
+                loadingTextElement.innerText = `Loading images... (${imagesLoadedCount}/${totalImages})`;
+                checkGameReady();
+            };
+            img.onerror = () => {
+                img.onerror = () => { 
+                    imagesLoadedCount++; 
+                    checkGameReady();
+                };
+                const fallbackText = q.imageUrl.replace('.png', '').replace('.jpg', '');
+                img.src = `https://placehold.co/400x400/0984e3/ffffff?text=${fallbackText}`;
+            };
+            img.src = q.imageUrl;
+            q.imgObj = img;
+        });
+
+        let game1CurrentQ = 0;
+        let game1Score = 0;
+        let game1Feedback = { text: "", time: 0, color: "" };
+        let game1HoverSide = null;
+        let game1HoverTimer = 0;
+        const game1HoverTimeRequired = 1500; // ยืนแช่ 1.5 วิ 
+
+        let game2Data = [
+            ["I", "wake", "up", "early"],
+            ["I", "take", "a", "shower"],
+            ["I", "have", "my", "breakfast"],
+            ["I", "go", "to", "school"],
+            ["I", "do", "my", "homework"],
+            ["I", "have", "dinner", "with", "family"],
+            ["I", "brush", "my", "teeth"],
+            ["I", "go", "to", "bed", "late"]
+        ];
+        let game2CurrentLevel = 0;
+        let game2Slots = [];
+        let game2Blocks = [];
+        let draggedBlock = null;
+        let game2Feedback = { text: "", time: 0, color: "" };
+
+        let menuButtons = [];
+
+        function startGameMode(mode) {
+            inputMode = mode;
+            modeSelection.style.display = 'none';
+            loadingScreen.style.display = 'flex';
+
+            if (mode === 'camera') {
+                document.getElementById('camera-hint').style.display = 'block';
+                initMediaPipe(); 
+            } else {
+                isAiReady = true; 
+                checkGameReady(); 
+            }
+        }
+
+        function initMenu() {
+            const btnW = 380;
+            const btnH = 120;
+            const centerX = canvasElement.width / 2;
+            const centerY = canvasElement.height / 2;
+            const startY = Math.max(220, centerY - 60);
+
+            const instruct = inputMode === 'camera' ? "(Pinch to Select)" : "(Click to Select)";
+
+            menuButtons = [
+                { id: 'btn_g1', text: `Game 1: Vocabulary Quiz\n${instruct}`, x: centerX - btnW/2, y: startY, w: btnW, h: btnH, color: colors.primary },
+                { id: 'btn_g2', text: `Game 2: Sentence Builder\n${instruct}`, x: centerX - btnW/2, y: startY + btnH + 30, w: btnW, h: btnH, color: colors.secondary }
+            ];
+        }
+
+        function initGame1() {
+            game1Data.sort(() => Math.random() - 0.5);
+            game1CurrentQ = 0;
+            game1Score = 0;
+            game1Feedback.time = 0;
+            game1HoverSide = null;
+            game1HoverTimer = 0;
+        }
+
+        function initGame2() {
+            if (game2CurrentLevel === 0) {
+                 game2Data.sort(() => Math.random() - 0.5);
+            }
+
+            if (game2CurrentLevel >= game2Data.length) {
+                currentState = GameState.MENU;
+                game2CurrentLevel = 0;
+                initMenu();
+                return;
+            }
+
+            const sentence = game2Data[game2CurrentLevel];
+            game2Slots = [];
+            game2Blocks = [];
+            draggedBlock = null;
+            game2Feedback = { text: "", time: 0, color: "" };
+
+            const cw = canvasElement.width;
+            const ch = canvasElement.height;
+            const slotW = Math.min(150, (cw - 40) / sentence.length - 10);
+            const slotH = 70;
+            const startX = (cw - (sentence.length * (slotW + 10))) / 2;
+
+            const slotY = Math.max(140, ch * 0.2); 
+            const blockY = Math.max(slotY + slotH + 120, ch * 0.65);
+
+            for (let i = 0; i < sentence.length; i++) {
+                game2Slots.push({
+                    expected: sentence[i],
+                    x: startX + i * (slotW + 10),
+                    y: slotY,
+                    w: slotW,
+                    h: slotH,
+                    filledWith: null
+                });
+            }
+
+            let shuffled = [...sentence].sort(() => Math.random() - 0.5);
+            
+            const blockStartX = (cw - (sentence.length * (slotW + 20))) / 2;
+            for (let i = 0; i < shuffled.length; i++) {
+                game2Blocks.push({
+                    text: shuffled[i],
+                    x: blockStartX + i * (slotW + 20),
+                    y: blockY,
+                    w: slotW,
+                    h: slotH,
+                    homeX: blockStartX + i * (slotW + 20),
+                    homeY: blockY
+                });
+            }
+        }
+
+        function drawRoundedRect(ctx, x, y, width, height, radius, fill, stroke) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+            if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+            if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 4; ctx.stroke(); }
+        }
+
+        function isPointInRect(px, py, rx, ry, rw, rh) {
+            return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+        }
+
+        function gameLoop() {
+            let dt = Date.now() - lastTime;
+            lastTime = Date.now();
+            const actionJustStarted = isActionActive() && !wasActionActive();
+
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            if (inputMode === 'camera') {
+                // วาดวิดีโอ (Mirror)
+                canvasCtx.save();
+                canvasCtx.translate(canvasElement.width, 0);
+                canvasCtx.scale(-1, 1);
+                let vRatio = canvasElement.width / canvasElement.height;
+                let cRatio = videoElement.videoWidth / videoElement.videoHeight;
+                let drawW, drawH, drawX, drawY;
+                if(cRatio > vRatio) { 
+                    drawH = canvasElement.height;
+                    drawW = videoElement.videoWidth * (canvasElement.height / videoElement.videoHeight);
+                    drawX = (canvasElement.width - drawW) / 2;
+                    drawY = 0;
+                } else { 
+                    drawW = canvasElement.width;
+                    drawH = videoElement.videoHeight * (canvasElement.width / videoElement.videoWidth);
+                    drawX = 0;
+                    drawY = (canvasElement.height - drawH) / 2;
+                }
+                if (videoElement.videoWidth > 0) {
+                    canvasCtx.globalAlpha = 0.5; 
+                    canvasCtx.drawImage(videoElement, drawX, drawY, drawW, drawH);
+                    canvasCtx.globalAlpha = 1.0;
+                }
+                canvasCtx.restore();
+                canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+            } else {
+                // พื้นหลังสำหรับโหมดสัมผัส 
+                const gradient = canvasCtx.createLinearGradient(0, 0, 0, canvasElement.height);
+                gradient.addColorStop(0, '#74b9ff');
+                gradient.addColorStop(1, '#a29bfe');
+                canvasCtx.fillStyle = gradient;
+                canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+            }
+
+            if (currentState === GameState.MENU) renderMenu(dt, actionJustStarted);
+            else if (currentState === GameState.GAME1) renderGame1(dt, actionJustStarted);
+            else if (currentState === GameState.GAME2) renderGame2(dt, actionJustStarted);
+
+            // ปุ่ม Back กลับเมนู
+            if (currentState !== GameState.MENU) {
+                const backBtn = { x: 20, y: 20, w: 120, h: 50 };
+                drawRoundedRect(canvasCtx, backBtn.x, backBtn.y, backBtn.w, backBtn.h, 10, colors.danger, colors.white);
+                canvasCtx.fillStyle = colors.white;
+                canvasCtx.font = "bold 20px Prompt";
+                canvasCtx.textAlign = "center";
+                canvasCtx.textBaseline = "middle";
+                canvasCtx.fillText("Back", backBtn.x + backBtn.w/2, backBtn.y + backBtn.h/2);
+
+                const pos = getCursorPos();
+                if (isPointInRect(pos.x, pos.y, backBtn.x, backBtn.y, backBtn.w, backBtn.h)) {
+                    canvasCtx.strokeStyle = colors.accent;
+                    canvasCtx.lineWidth = 3;
+                    canvasCtx.strokeRect(backBtn.x-2, backBtn.y-2, backBtn.w+4, backBtn.h+4);
+                    if (actionJustStarted) {
+                        currentState = GameState.MENU;
+                        initMenu();
+                    }
+                }
+            }
+
+            // เคอร์เซอร์สำหรับ AR 
+            if (inputMode === 'camera' && currentState !== GameState.MENU) {
+                if (isHandVisible) {
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(cursorX, cursorY, 15, 0, 2 * Math.PI);
+                    canvasCtx.fillStyle = isPinching ? colors.danger : colors.accent;
+                    canvasCtx.fill();
+                    canvasCtx.lineWidth = 4;
+                    canvasCtx.strokeStyle = colors.white;
+                    canvasCtx.stroke();
+                    
+                    canvasCtx.fillStyle = colors.white;
+                    canvasCtx.font = "bold 16px Prompt";
+                    canvasCtx.textAlign = "center";
+                    canvasCtx.fillText(isPinching ? "Pinching" : "Open Hand", cursorX, cursorY - 25);
+                } else {
+                    canvasCtx.fillStyle = colors.danger;
+                    canvasCtx.font = "bold 24px Prompt";
+                    canvasCtx.textAlign = "center";
+                    canvasCtx.fillText("Hand not detected. Please raise your hand.", canvasElement.width/2, 50);
+                }
+            }
+
+            wasPinching = isPinching;
+            wasMouseDown = isMouseDown;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function renderMenu(dt, actionJustStarted) {
+            canvasCtx.fillStyle = colors.white;
+            canvasCtx.font = "bold 50px Mali";
+            canvasCtx.textAlign = "center";
+            canvasCtx.fillText("Daily Routine AR Game", canvasElement.width/2, 100);
+            
+            canvasCtx.font = "24px Prompt";
+            canvasCtx.fillText(inputMode === 'camera' ? "Pinch to select a game" : "Click or Tap to select a game", canvasElement.width/2, 150);
+
+            menuButtons.forEach(btn => {
+                drawRoundedRect(canvasCtx, btn.x, btn.y, btn.w, btn.h, 20, btn.color, colors.white);
+                
+                canvasCtx.fillStyle = colors.white;
+                canvasCtx.font = "bold 24px Prompt";
+                canvasCtx.textAlign = "center";
+                canvasCtx.textBaseline = "middle";
+                const lines = btn.text.split('\n');
+                canvasCtx.fillText(lines[0], btn.x + btn.w/2, btn.y + btn.h/2 - 15);
+                canvasCtx.font = "18px Prompt";
+                canvasCtx.fillText(lines[1], btn.x + btn.w/2, btn.y + btn.h/2 + 20);
+
+                const pos = getCursorPos();
+                if (isPointInRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
+                    canvasCtx.strokeStyle = colors.accent;
+                    canvasCtx.lineWidth = 5;
+                    canvasCtx.strokeRect(btn.x-2, btn.y-2, btn.w+4, btn.h+4);
+                    
+                    if (actionJustStarted) {
+                        if (btn.id === 'btn_g1') {
+                            initGame1();
+                            currentState = GameState.GAME1;
+                        } else {
+                            game2CurrentLevel = 0;
+                            initGame2();
+                            currentState = GameState.GAME2;
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderGame1(dt, actionJustStarted) {
+            if (game1CurrentQ >= game1Data.length) {
+                canvasCtx.fillStyle = colors.white;
+                canvasCtx.font = "bold 50px Mali";
+                canvasCtx.textAlign = "center";
+                canvasCtx.fillText("Game Over!", canvasElement.width/2, canvasElement.height/2 - 50);
+                canvasCtx.font = "30px Prompt";
+                canvasCtx.fillText(`Your Score: ${game1Score} / ${game1Data.length}`, canvasElement.width/2, canvasElement.height/2 + 20);
+                return;
+            }
+
+            const cw = canvasElement.width;
+            const ch = canvasElement.height;
+            const qData = game1Data[game1CurrentQ];
+
+            canvasCtx.fillStyle = 'rgba(9, 132, 227, 0.4)'; 
+            canvasCtx.fillRect(0, 0, cw/2, ch);
+            canvasCtx.fillStyle = 'rgba(214, 48, 49, 0.4)'; 
+            canvasCtx.fillRect(cw/2, 0, cw/2, ch);
+            
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(cw/2, 0);
+            canvasCtx.lineTo(cw/2, ch);
+            canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+            canvasCtx.lineWidth = 4;
+            canvasCtx.stroke();
+
+            const imgW = Math.min(250, cw * 0.4, ch * 0.35);
+            const imgH = imgW;
+            const imgX = cw/2 - imgW/2;
+            const imgY = Math.max(90, ch * 0.15); 
+
+            if (qData.imgObj && qData.imgObj.complete && qData.imgObj.naturalWidth !== 0) {
+                drawRoundedRect(canvasCtx, imgX - 10, imgY - 10, imgW + 20, imgH + 20, 15, colors.white, colors.accent);
+                canvasCtx.drawImage(qData.imgObj, imgX, imgY, imgW, imgH);
+            } else {
+                drawRoundedRect(canvasCtx, imgX, imgY, imgW, imgH, 15, 'rgba(255,255,255,0.2)', colors.white);
+                canvasCtx.fillStyle = colors.white;
+                canvasCtx.font = "20px Prompt";
+                canvasCtx.textAlign = "center";
+                canvasCtx.fillText("Loading Image...", cw/2, imgY + imgH/2);
+            }
+
+            canvasCtx.fillStyle = colors.white;
+            canvasCtx.font = "bold " + Math.max(18, Math.min(30, cw * 0.04)) + "px Prompt";
+            canvasCtx.textAlign = "center";
+            const instrText = inputMode === 'camera' ? "Move your hand Left/Right and HOLD to select!" : "Click or Tap Left/Right to select!";
+            canvasCtx.fillText(instrText, cw/2, imgY - 20);
+
+            const textY = Math.max(imgY + imgH + 70, ch * 0.65);
+            canvasCtx.font = "bold " + Math.max(40, Math.min(60, cw * 0.08)) + "px Mali";
+            
+            canvasCtx.fillStyle = game1HoverSide === 'left' ? colors.accent : colors.white;
+            canvasCtx.textAlign = "center";
+            canvasCtx.fillText(qData.choices[0], cw * 0.25, textY);
+            
+            canvasCtx.fillStyle = game1HoverSide === 'right' ? colors.accent : colors.white;
+            canvasCtx.textAlign = "center";
+            canvasCtx.fillText(qData.choices[1], cw * 0.75, textY);
+
+            if (game1Feedback.time <= 0) {
+                const pos = getCursorPos();
+                
+                if (inputMode === 'camera' && (isHandVisible || pos.active === false)) {
+                    const currentSide = pos.x < cw / 2 ? 'left' : 'right';
+                    if (game1HoverSide !== currentSide) {
+                        game1HoverSide = currentSide;
+                        game1HoverTimer = 0;
+                    }
+                    game1HoverTimer += dt;
+
+                    const barW = Math.min(250, cw * 0.3);
+                    const barH = 20;
+                    const barX = (currentSide === 'left' ? cw * 0.25 : cw * 0.75) - barW / 2;
+                    const barY = textY + 30;
+                    const progress = Math.min(game1HoverTimer / game1HoverTimeRequired, 1);
+
+                    canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                    canvasCtx.fillRect(barX, barY, barW, barH);
+                    canvasCtx.fillStyle = colors.accent;
+                    canvasCtx.fillRect(barX, barY, barW * progress, barH);
+                    canvasCtx.strokeStyle = colors.white;
+                    canvasCtx.lineWidth = 2;
+                    canvasCtx.strokeRect(barX, barY, barW, barH);
+
+                    if (game1HoverTimer >= game1HoverTimeRequired) {
+                        submitGame1Answer(currentSide === 'left' ? 0 : 1, qData);
+                    }
+                } else if (inputMode === 'touch') {
+                    game1HoverSide = (pos.x < cw / 2) ? 'left' : 'right';
+                    if (actionJustStarted) {
+                        submitGame1Answer(game1HoverSide === 'left' ? 0 : 1, qData);
+                    }
+                } else {
+                    game1HoverTimer = 0;
+                    game1HoverSide = null;
+                }
+            } else {
+                game1Feedback.time -= dt;
+                canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                canvasCtx.fillRect(0, ch/2 - 50, cw, 100);
+                canvasCtx.fillStyle = game1Feedback.color;
+                canvasCtx.font = "bold 45px Prompt";
+                canvasCtx.textAlign = "center";
+                canvasCtx.textBaseline = "middle";
+                canvasCtx.fillText(game1Feedback.text, cw/2, ch/2);
+                
+                if (game1Feedback.time <= 0) game1CurrentQ++;
+            }
+            
+            canvasCtx.fillStyle = colors.accent;
+            canvasCtx.font = "bold 24px Prompt";
+            canvasCtx.textAlign = "right";
+            canvasCtx.fillText(`Score: ${game1Score}`, cw - 30, 40);
+        }
+
+        function submitGame1Answer(selectedAnswer, qData) {
+            if (selectedAnswer === qData.answer) {
+                game1Score++;
+                game1Feedback = { text: "Correct! Moving to the next question...", time: 2000, color: colors.success };
+            } else {
+                game1Feedback = { text: `Incorrect! Answer is: ${qData.choices[qData.answer]}`, time: 3000, color: colors.danger };
+            }
+            game1HoverTimer = 0;
+            game1HoverSide = null;
+        }
+
+        function drawBlock(b, isDragging = false) {
+            const scale = isDragging ? 1.05 : 1; 
+            const x = b.x - (b.w * (scale - 1) / 2);
+            const y = b.y - (b.h * (scale - 1) / 2);
+            const w = b.w * scale;
+            const h = b.h * scale;
+
+            drawRoundedRect(canvasCtx, x, y, w, h, 15, colors.primary, colors.white);
+            if (isDragging) {
+                canvasCtx.fillStyle = 'rgba(0,0,0,0.3)';
+                canvasCtx.fillRect(x + 5, y + 5, w, h);
+            }
+            canvasCtx.fillStyle = colors.white;
+            canvasCtx.font = "bold 26px Mali";
+            canvasCtx.textAlign = "center";
+            canvasCtx.textBaseline = "middle";
+            canvasCtx.fillText(b.text, x + w/2, y + h/2);
+        }
+
+        function renderGame2(dt, actionJustStarted) {
+            canvasCtx.fillStyle = colors.white;
+            canvasCtx.font = "bold 35px Prompt";
+            canvasCtx.textAlign = "center";
+            canvasCtx.fillText("Arrange the sentence correctly", canvasElement.width/2, 50);
+            
+            canvasCtx.font = "20px Prompt";
+            const instr = inputMode === 'camera' ? "Pinch to pick and drag the word blocks" : "Click and Drag to move the word blocks";
+            canvasCtx.fillText(instr, canvasElement.width/2, 80);
+
+            // 1. วาด Slots
+            game2Slots.forEach(slot => {
+                drawRoundedRect(canvasCtx, slot.x, slot.y, slot.w, slot.h, 10, 'rgba(255,255,255,0.2)', colors.white);
+                if (!slot.filledWith) {
+                    canvasCtx.fillStyle = 'rgba(255,255,255,0.5)';
+                    canvasCtx.font = "20px Prompt";
+                    canvasCtx.textAlign = "center";
+                    canvasCtx.textBaseline = "middle";
+                    canvasCtx.fillText("Drop here", slot.x + slot.w/2, slot.y + slot.h/2);
+                }
+            });
+
+            // 2. ลอจิกการลาก
+            const pos = getCursorPos();
+            const actionActive = isActionActive();
+            
+            if (actionActive) {
+                if (!draggedBlock) {
+                    for (let i = game2Blocks.length - 1; i >= 0; i--) { 
+                        const b = game2Blocks[i];
+                        if (isPointInRect(pos.x, pos.y, b.x, b.y, b.w, b.h)) {
+                            draggedBlock = b;
+                            game2Slots.forEach(s => {
+                                if (s.filledWith === b) s.filledWith = null;
+                            });
+                            break;
+                        }
+                    }
+                }
+            } else {
+                if (draggedBlock) {
+                    let droppedInSlot = false;
+                    for (let i = 0; i < game2Slots.length; i++) {
+                        const s = game2Slots[i];
+                        const bx = draggedBlock.x + draggedBlock.w/2;
+                        const by = draggedBlock.y + draggedBlock.h/2;
+                        if (isPointInRect(bx, by, s.x, s.y, s.w, s.h)) {
+                            if (s.filledWith && s.filledWith !== draggedBlock) {
+                                s.filledWith.x = s.filledWith.homeX;
+                                s.filledWith.y = s.filledWith.homeY;
+                            }
+                            draggedBlock.x = s.x;
+                            draggedBlock.y = s.y;
+                            s.filledWith = draggedBlock;
+                            droppedInSlot = true;
+                            break;
+                        }
+                    }
+                    if (!droppedInSlot) {
+                        // ปล่อยนอก Slot ให้อยู่ตรงนั้น
+                    }
+                    draggedBlock = null;
+                }
+            }
+
+            if (draggedBlock) {
+                draggedBlock.x = pos.x - draggedBlock.w / 2;
+                draggedBlock.y = pos.y - draggedBlock.h / 2;
+            }
+
+            // 3. วาด Blocks
+            game2Blocks.forEach(b => {
+                if (b !== draggedBlock) drawBlock(b);
+            });
+            if (draggedBlock) drawBlock(draggedBlock, true);
+
+            // 4. ปุ่ม Submit 
+            const slotY = game2Slots.length > 0 ? game2Slots[0].y : 140;
+            const slotH = 70;
+            const blockY = game2Blocks.length > 0 ? game2Blocks[0].homeY : canvasElement.height * 0.65;
+            const submitBtnY = slotY + slotH + (blockY - (slotY + slotH)) / 2 - 30;
+
+            const submitBtn = { x: canvasElement.width / 2 - 80, y: submitBtnY, w: 160, h: 60 };
+            drawRoundedRect(canvasCtx, submitBtn.x, submitBtn.y, submitBtn.w, submitBtn.h, 10, colors.success, colors.white);
+            canvasCtx.fillStyle = colors.white;
+            canvasCtx.font = "bold 24px Prompt";
+            canvasCtx.textAlign = "center";
+            canvasCtx.textBaseline = "middle";
+            canvasCtx.fillText("Submit", submitBtn.x + submitBtn.w/2, submitBtn.y + submitBtn.h/2);
+
+            if (isPointInRect(pos.x, pos.y, submitBtn.x, submitBtn.y, submitBtn.w, submitBtn.h)) {
+                canvasCtx.strokeStyle = colors.accent;
+                canvasCtx.lineWidth = 3;
+                canvasCtx.strokeRect(submitBtn.x - 2, submitBtn.y - 2, submitBtn.w + 4, submitBtn.h + 4);
+                if (actionJustStarted) {
+                    checkGame2Win();
+                }
+            }
+
+            // แสดง Feedback
+            if (game2Feedback.time > 0) {
+                game2Feedback.time -= dt;
+                canvasCtx.fillStyle = game2Feedback.color || colors.success;
+                canvasCtx.font = "bold 30px Prompt";
+                const feedbackY = submitBtn.y + submitBtn.h + 35; 
+                canvasCtx.fillText(game2Feedback.text, canvasElement.width/2, feedbackY);
+                
+                if (game2Feedback.time <= 0 && game2Feedback.color === colors.success) {
+                    game2CurrentLevel++;
+                    initGame2();
+                    return; 
+                }
+            }
+        }
+
+        function checkGame2Win() {
+            let isFull = true;
+            let isCorrect = true;
+
+            for (let i = 0; i < game2Slots.length; i++) {
+                const s = game2Slots[i];
+                if (!s.filledWith) { isFull = false; break; }
+                if (s.filledWith.text !== s.expected) { isCorrect = false; }
+            }
+
+            if (!isFull) {
+                game2Feedback = { text: "Please complete the sentence first.", time: 2000, color: colors.accent };
+                return;
+            }
+
+            if (isCorrect) {
+                game2Feedback = { text: "Correct! Moving to the next level...", time: 3000, color: colors.success };
+            } else {
+                game2Feedback = { text: "Not quite right. Try again!", time: 2000, color: colors.danger };
+                game2Slots.forEach(s => {
+                    if (s.filledWith && s.filledWith.text !== s.expected) {
+                        s.filledWith.x = s.filledWith.homeX;
+                        s.filledWith.y = s.filledWith.homeY;
+                        s.filledWith = null;
+                    }
+                });
+            }
+        }
+
+        function initMediaPipe() {
+            const hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }
+            });
+
+            hands.setOptions({
+                maxNumHands: 1, 
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+
+            hands.onResults((results) => {
+                if (!isAiReady) {
+                    isAiReady = true;
+                    loadingTextElement.innerText = "AI System is ready. Starting game...";
+                    checkGameReady();
+                }
+
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    isHandVisible = true;
+                    const landmarks = results.multiHandLandmarks[0];
+                    const indexTip = landmarks[8];
+                    const thumbTip = landmarks[4];
+
+                    cursorX = (1 - indexTip.x) * canvasElement.width;
+                    cursorY = indexTip.y * canvasElement.height;
+
+                    const thumbX = (1 - thumbTip.x) * canvasElement.width;
+                    const thumbY = thumbTip.y * canvasElement.height;
+                    const distance = Math.hypot(cursorX - thumbX, cursorY - thumbY);
+                    
+                    isPinching = distance < (canvasElement.width * 0.05);
+                } else {
+                    isHandVisible = false;
+                    isPinching = false;
+                }
+            });
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            camera.start().catch(err => {
+                alert("Cannot access the camera. Please check your webcam permissions.");
+                console.error(err);
+                loadingScreen.innerHTML = `
+                    <h1>Error</h1>
+                    <p>Browser cannot access your camera.</p>
+                    <button onclick="location.reload()" style="padding: 10px 20px; font-size: 1.2rem; margin-top: 20px; cursor: pointer;">Refresh Page</button>
+                `;
+            });
+        }
+    </script>
+</body>
+</html>
