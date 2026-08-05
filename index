@@ -296,14 +296,14 @@
         };
 
         const game1Data = [
-            { imageUrl: "WakeUp.png", imgObj: null, choices: ["wake up", "go to sleep"], answer: 0 },
-            { imageUrl: "Shower.png", imgObj: null, choices: ["brush teeth", "take a shower"], answer: 1 },
-            { imageUrl: "Breakfast.png", imgObj: null, choices: ["have breakfast", "have dinner"], answer: 0 },
-            { imageUrl: "School.png", imgObj: null, choices: ["go to school", "go home"], answer: 0 },
-            { imageUrl: "Homework.png", imgObj: null, choices: ["play games", "do homework"], answer: 1 },
-            { imageUrl: "Dinner.png", imgObj: null, choices: ["have dinner", "have lunch"], answer: 0 },
-            { imageUrl: "BrushTeeth.png", imgObj: null, choices: ["wash face", "brush teeth"], answer: 1 },
-            { imageUrl: "Sleep.png", imgObj: null, choices: ["go to bed", "wake up"], answer: 0 }
+            { imageUrl: "Wake-up.png", imgObj: null, choices: ["wake up", "go to sleep"], answer: 0 },
+            { imageUrl: "Take-a-shower.png", imgObj: null, choices: ["brush teeth", "take a shower"], answer: 1 },
+            { imageUrl: "Have-breakfast.png", imgObj: null, choices: ["have breakfast", "have dinner"], answer: 0 },
+            { imageUrl: "Go-to-school.png", imgObj: null, choices: ["go to school", "go home"], answer: 0 },
+            { imageUrl: "Do-homework.png", imgObj: null, choices: ["play games", "do homework"], answer: 1 },
+            { imageUrl: "Have-lunch.png", imgObj: null, choices: ["have dinner", "have lunch"], answer: 1 },
+            { imageUrl: "Brush-teeth.png", imgObj: null, choices: ["wash face", "brush teeth"], answer: 1 },
+            { imageUrl: "Go-to-bed.png", imgObj: null, choices: ["go to bed", "wake up"], answer: 0 }
         ];
 
         let isAiReady = false;
