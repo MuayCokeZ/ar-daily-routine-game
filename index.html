@@ -244,6 +244,15 @@
                 const backBtn = { x: 20, y: 20, w: 120, h: 50 };
                 if (isPointInRect(mouseX, mouseY, backBtn.x, backBtn.y, backBtn.w, backBtn.h)) pointer = true;
             }
+            
+            // ปิดไอคอนเมาส์ Pointer ถ้าอยู่ในโหมดกล้อง (ยกเว้นกำลังชี้ปุ่ม Back)
+            if (inputMode === 'camera') {
+                const backBtn = { x: 20, y: 20, w: 120, h: 50 };
+                if (!isPointInRect(mouseX, mouseY, backBtn.x, backBtn.y, backBtn.w, backBtn.h)) {
+                    pointer = false;
+                }
+            }
+            
             canvasElement.style.cursor = pointer ? 'pointer' : 'default';
         }
 
@@ -271,22 +280,16 @@
 
         let lastTime = Date.now();
 
-        // คืนค่าพิกัดตามโหมดที่เล่น
-        function getCursorPos() {
-            if (inputMode === 'camera' && isHandVisible) {
-                return { x: cursorX, y: cursorY, active: true };
+        // คืนค่าพิกัดตามโหมดที่เล่น (อัปเดตแยก Game Input ตัดระบบสัมผัสใน AR)
+        function getGameInput() {
+            if (inputMode === 'camera') {
+                if (isHandVisible) {
+                    return { x: cursorX, y: cursorY, active: true, actionJustStarted: isPinching && !wasPinching, actionActive: isPinching };
+                }
+                return { x: 0, y: 0, active: false, actionJustStarted: false, actionActive: false }; 
+            } else {
+                return { x: mouseX, y: mouseY, active: true, actionJustStarted: isMouseDown && !wasMouseDown, actionActive: isMouseDown }; 
             }
-            return { x: mouseX, y: mouseY, active: false }; 
-        }
-
-        function isActionActive() {
-            if (inputMode === 'camera') return isPinching || isMouseDown;
-            return isMouseDown; // ถ้าเล่นสัมผัส ใช้แค่ Touch/Mouse
-        }
-
-        function wasActionActive() {
-            if (inputMode === 'camera') return wasPinching || wasMouseDown;
-            return wasMouseDown;
         }
 
         // สีธีม
@@ -307,7 +310,7 @@
             { imageUrl: "Have-breakfast.png", imgObj: null, choices: ["have breakfast", "have dinner"], answer: 0 },
             { imageUrl: "Go-to-school.png", imgObj: null, choices: ["go to school", "go home"], answer: 0 },
             { imageUrl: "Do-homework.png", imgObj: null, choices: ["play games", "do homework"], answer: 1 },
-            { imageUrl: "Eat-lunch.png", imgObj: null, choices: ["have dinner", "have lunch"], answer: 1 },
+            { imageUrl: "Have-lunch.png", imgObj: null, choices: ["have dinner", "have lunch"], answer: 1 },
             { imageUrl: "Brush-teeth.png", imgObj: null, choices: ["wash face", "brush teeth"], answer: 1 },
             { imageUrl: "Go-to-bed.png", imgObj: null, choices: ["go to bed", "wake up"], answer: 0 }
         ];
@@ -497,7 +500,6 @@
         function gameLoop() {
             let dt = Date.now() - lastTime;
             lastTime = Date.now();
-            const actionJustStarted = isActionActive() && !wasActionActive();
 
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
@@ -538,9 +540,9 @@
             }
 
             // อัปเดต State
-            if (currentState === GameState.MENU) renderMenu(dt, actionJustStarted);
-            else if (currentState === GameState.GAME1) renderGame1(dt, actionJustStarted);
-            else if (currentState === GameState.GAME2) renderGame2(dt, actionJustStarted);
+            if (currentState === GameState.MENU) renderMenu(dt);
+            else if (currentState === GameState.GAME1) renderGame1(dt);
+            else if (currentState === GameState.GAME2) renderGame2(dt);
 
             // วาดปุ่ม Back
             if (currentState !== GameState.MENU) {
@@ -552,12 +554,27 @@
                 canvasCtx.textBaseline = "middle";
                 canvasCtx.fillText("Back", backBtn.x + backBtn.w/2, backBtn.y + backBtn.h/2);
 
-                const pos = getCursorPos();
-                if (isPointInRect(pos.x, pos.y, backBtn.x, backBtn.y, backBtn.w, backBtn.h)) {
+                let isHoveringBack = false;
+                let isClickingBack = false;
+
+                // 1. เช็คจากการสัมผัสหน้าจอ / เมาส์ (ทำงานเสมอ)
+                if (isPointInRect(mouseX, mouseY, backBtn.x, backBtn.y, backBtn.w, backBtn.h)) {
+                    isHoveringBack = true;
+                    if (isMouseDown && !wasMouseDown) isClickingBack = true;
+                }
+                // 2. เช็คจากกล้อง AR
+                if (inputMode === 'camera' && isHandVisible) {
+                    if (isPointInRect(cursorX, cursorY, backBtn.x, backBtn.y, backBtn.w, backBtn.h)) {
+                        isHoveringBack = true;
+                        if (isPinching && !wasPinching) isClickingBack = true;
+                    }
+                }
+
+                if (isHoveringBack) {
                     canvasCtx.strokeStyle = colors.accent;
                     canvasCtx.lineWidth = 3;
                     canvasCtx.strokeRect(backBtn.x-2, backBtn.y-2, backBtn.w+4, backBtn.h+4);
-                    if (actionJustStarted) {
+                    if (isClickingBack) {
                         currentState = GameState.MENU;
                         initMenu();
                     }
@@ -593,7 +610,9 @@
         }
 
         // --- วาด UI ย่อย ---
-        function renderMenu(dt, actionJustStarted) {
+        function renderMenu(dt) {
+            const input = getGameInput();
+            
             canvasCtx.fillStyle = colors.white;
             canvasCtx.font = "bold 50px Mali";
             canvasCtx.textAlign = "center";
@@ -614,13 +633,12 @@
                 canvasCtx.font = "18px Prompt";
                 canvasCtx.fillText(lines[1], btn.x + btn.w/2, btn.y + btn.h/2 + 20);
 
-                const pos = getCursorPos();
-                if (isPointInRect(pos.x, pos.y, btn.x, btn.y, btn.w, btn.h)) {
+                if (input.active && isPointInRect(input.x, input.y, btn.x, btn.y, btn.w, btn.h)) {
                     canvasCtx.strokeStyle = colors.accent;
                     canvasCtx.lineWidth = 5;
                     canvasCtx.strokeRect(btn.x-2, btn.y-2, btn.w+4, btn.h+4);
                     
-                    if (actionJustStarted) {
+                    if (input.actionJustStarted) {
                         if (btn.id === 'btn_g1') {
                             initGame1();
                             currentState = GameState.GAME1;
@@ -634,7 +652,9 @@
             });
         }
 
-        function renderGame1(dt, actionJustStarted) {
+        function renderGame1(dt) {
+            const input = getGameInput();
+            
             if (game1CurrentQ >= game1Data.length) {
                 canvasCtx.fillStyle = colors.white;
                 canvasCtx.font = "bold 50px Mali";
@@ -701,40 +721,40 @@
 
             // ลอจิกการตอบ
             if (game1Feedback.time <= 0) {
-                const pos = getCursorPos();
-                
-                if (inputMode === 'camera' && (isHandVisible || pos.active === false)) {
-                    // --- AR โหมด: ยืนแช่ 1 วินาที ---
-                    const currentSide = pos.x < cw / 2 ? 'left' : 'right';
-                    if (game1HoverSide !== currentSide) {
-                        game1HoverSide = currentSide;
-                        game1HoverTimer = 0;
-                    }
-                    game1HoverTimer += dt;
+                if (input.active) {
+                    if (inputMode === 'camera') {
+                        // --- AR โหมด: ยืนแช่ 1 วินาที ---
+                        const currentSide = input.x < cw / 2 ? 'left' : 'right';
+                        if (game1HoverSide !== currentSide) {
+                            game1HoverSide = currentSide;
+                            game1HoverTimer = 0;
+                        }
+                        game1HoverTimer += dt;
 
-                    // วาดหลอดโหลด
-                    const barW = Math.min(250, cw * 0.3);
-                    const barH = 20;
-                    const barX = (currentSide === 'left' ? cw * 0.25 : cw * 0.75) - barW / 2;
-                    const barY = textY + 30;
-                    const progress = Math.min(game1HoverTimer / game1HoverTimeRequired, 1);
+                        // วาดหลอดโหลด
+                        const barW = Math.min(250, cw * 0.3);
+                        const barH = 20;
+                        const barX = (currentSide === 'left' ? cw * 0.25 : cw * 0.75) - barW / 2;
+                        const barY = textY + 30;
+                        const progress = Math.min(game1HoverTimer / game1HoverTimeRequired, 1);
 
-                    canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-                    canvasCtx.fillRect(barX, barY, barW, barH);
-                    canvasCtx.fillStyle = colors.accent;
-                    canvasCtx.fillRect(barX, barY, barW * progress, barH);
-                    canvasCtx.strokeStyle = colors.white;
-                    canvasCtx.lineWidth = 2;
-                    canvasCtx.strokeRect(barX, barY, barW, barH);
+                        canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                        canvasCtx.fillRect(barX, barY, barW, barH);
+                        canvasCtx.fillStyle = colors.accent;
+                        canvasCtx.fillRect(barX, barY, barW * progress, barH);
+                        canvasCtx.strokeStyle = colors.white;
+                        canvasCtx.lineWidth = 2;
+                        canvasCtx.strokeRect(barX, barY, barW, barH);
 
-                    if (game1HoverTimer >= game1HoverTimeRequired) {
-                        submitGame1Answer(currentSide === 'left' ? 0 : 1, qData);
-                    }
-                } else if (inputMode === 'touch') {
-                    // --- Touch โหมด: จิ้มตอบได้ทันที ---
-                    game1HoverSide = (pos.x < cw / 2) ? 'left' : 'right';
-                    if (actionJustStarted) {
-                        submitGame1Answer(game1HoverSide === 'left' ? 0 : 1, qData);
+                        if (game1HoverTimer >= game1HoverTimeRequired) {
+                            submitGame1Answer(currentSide === 'left' ? 0 : 1, qData);
+                        }
+                    } else {
+                        // --- Touch โหมด: จิ้มตอบได้ทันที ---
+                        game1HoverSide = (input.x < cw / 2) ? 'left' : 'right';
+                        if (input.actionJustStarted) {
+                            submitGame1Answer(game1HoverSide === 'left' ? 0 : 1, qData);
+                        }
                     }
                 } else {
                     game1HoverTimer = 0;
@@ -791,7 +811,9 @@
             canvasCtx.fillText(b.text, x + w/2, y + h/2);
         }
 
-        function renderGame2(dt, actionJustStarted) {
+        function renderGame2(dt) {
+            const input = getGameInput();
+            
             canvasCtx.fillStyle = colors.white;
             canvasCtx.font = "bold 35px Prompt";
             canvasCtx.textAlign = "center";
@@ -814,14 +836,11 @@
             });
 
             // 2. ลอจิกการลาก
-            const pos = getCursorPos();
-            const actionActive = isActionActive();
-            
-            if (actionActive) {
+            if (input.active && input.actionActive) {
                 if (!draggedBlock) {
                     for (let i = game2Blocks.length - 1; i >= 0; i--) { 
                         const b = game2Blocks[i];
-                        if (isPointInRect(pos.x, pos.y, b.x, b.y, b.w, b.h)) {
+                        if (isPointInRect(input.x, input.y, b.x, b.y, b.w, b.h)) {
                             draggedBlock = b;
                             game2Slots.forEach(s => {
                                 if (s.filledWith === b) s.filledWith = null;
@@ -856,9 +875,9 @@
                 }
             }
 
-            if (draggedBlock) {
-                draggedBlock.x = pos.x - draggedBlock.w / 2;
-                draggedBlock.y = pos.y - draggedBlock.h / 2;
+            if (draggedBlock && input.active) {
+                draggedBlock.x = input.x - draggedBlock.w / 2;
+                draggedBlock.y = input.y - draggedBlock.h / 2;
             }
 
             // 3. วาด Blocks
@@ -882,11 +901,11 @@
             canvasCtx.textBaseline = "middle";
             canvasCtx.fillText("Submit", submitBtn.x + submitBtn.w/2, submitBtn.y + submitBtn.h/2);
 
-            if (isPointInRect(pos.x, pos.y, submitBtn.x, submitBtn.y, submitBtn.w, submitBtn.h)) {
+            if (input.active && isPointInRect(input.x, input.y, submitBtn.x, submitBtn.y, submitBtn.w, submitBtn.h)) {
                 canvasCtx.strokeStyle = colors.accent;
                 canvasCtx.lineWidth = 3;
                 canvasCtx.strokeRect(submitBtn.x - 2, submitBtn.y - 2, submitBtn.w + 4, submitBtn.h + 4);
-                if (actionJustStarted) {
+                if (input.actionJustStarted) {
                     checkGame2Win();
                 }
             }
@@ -998,5 +1017,3 @@
     </script>
 </body>
 </html>
-
-
